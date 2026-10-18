@@ -121,8 +121,9 @@ class NaturalFollowup(Star):
             self.log("cancelled_or_limited")
             return
         lane = self.engine.lanes.get(key)
-        if batch.parent is None and lane:
-            batch.parent = next((b for b in lane.batches if b is not batch and b.running and not b.done.is_set()), None)
+        if lane:
+            batch.parent = next((b for b in reversed(lane.batches)
+                                 if b is not batch and b.running and not b.done.is_set()), None)
         # 原生 follow_up 只接收文字；媒体必须留到下一轮多模态请求。
         if batch.parent and any(i.images for i in batch.items):
             await batch.parent.done.wait()
@@ -132,6 +133,12 @@ class NaturalFollowup(Star):
         components = []
         for entry in batch.items:
             components.extend(entry.event.get_messages())
+            if entry.event is not event:
+                # 图片可能被原生历史持久化逻辑解除临时跟踪；必须把所有权交给
+                # 主事件，否则后续事件退出时仍会删除框架决定保留的媒体。
+                for path in list(entry.event._temporary_local_files):
+                    event.track_temporary_local_file(path)
+                    entry.event.untrack_temporary_local_file(path)
         event.message_obj.message = components
         event.message_str = batch.text
         event.message_obj.message_str = batch.text
@@ -140,7 +147,7 @@ class NaturalFollowup(Star):
         event.set_extra("enable_streaming", False)
         event.set_extra("_natural_followup_message_ids", [i.message_id for i in batch.items])
         event.set_extra("_group_participation_reason", "named" if batch.explicit else "followup")
-        self.log("accepted", items=len(batch.items), explicit=batch.explicit)
+        self.log("accepted", trigger=batch.reason, batches=1, items=len(batch.items), explicit=batch.explicit)
 
     @filter.on_llm_request(priority=-100000)
     async def on_request(self, event, req):
@@ -183,7 +190,9 @@ class NaturalFollowup(Star):
         lane = self.engine.lanes.get(batch.key)
         if lane:
             for child in list(lane.batches):
-                if child.parent is batch and child.items[0].event.get_extra("_follow_up_captured"):
+                captured = child.items[0].event.get_extra("_follow_up_captured")
+                if (child.parent is batch and captured
+                        and captured.get("target_run_id") == batch.items[0].message_id):
                     self.engine.absorb(child)
                     child.parent = None
 

@@ -157,6 +157,54 @@ class Rules(unittest.TestCase):
         self.assertTrue(batch.cancelled)
         self.assertTrue(batch.done.is_set())
 
+    def test_char_limit_splits_without_truncation(self):
+        first, _ = self.engine.submit(A, "explicit", Item("1", "甲" * 7900))
+        second, leader = self.engine.submit(A, "followup", Item("2", "乙" * 200))
+        self.assertTrue(leader)
+        self.assertTrue(first.sealed)
+        self.assertEqual(len(first.text) + len(second.text), 8100)
+
+    def test_pending_batches_are_bounded(self):
+        for n in range(4):
+            batch, _ = self.engine.submit(A, "explicit", Item(str(n), "长任务"))
+            batch.sealed = True
+        rejected, _ = self.engine.submit(A, "followup", Item("overflow", "补充"))
+        self.assertIsNone(rejected)
+        self.assertEqual(len(self.engine.lanes[A].batches), 4)
+
+    def test_hung_lane_cleanup_releases_all_batches(self):
+        first, _ = self.engine.submit(A, "explicit", Item("1", "长任务"))
+        first.sealed = first.running = True
+        self.now += 2
+        child, _ = self.engine.submit(A, "followup", Item("2", "", images=True))
+        self.now += 598
+        self.engine.prune()
+        self.assertTrue(first.cancelled and child.cancelled)
+        self.assertTrue(first.done.is_set() and child.done.is_set())
+        self.assertNotIn(A, self.engine.lanes)
+
+    def test_group_quota_shared_across_users(self):
+        self.engine = Engine(Settings(group_batches_per_minute=1), lambda: self.now)
+        first, _ = self.engine.submit(A, "followup", Item("1", "甲"))
+        self.assertIsNotNone(first)
+        second, _ = self.engine.submit(B, "followup", Item("2", "乙"))
+        self.assertIsNone(second)
+        self.now += 60
+        second, _ = self.engine.submit(B, "followup", Item("3", "乙"))
+        self.assertIsNotNone(second)
+
+    def test_join_quota(self):
+        for n in range(2):
+            batch, _ = self.engine.submit((*A[:-1], str(n)), "join", Item(str(n), "补充"))
+            self.assertIsNotNone(batch)
+        batch, _ = self.engine.submit(B, "join", Item("third", "补充"))
+        self.assertIsNone(batch)
+
+    def test_new_sender_cannot_join_previous_conversation(self):
+        self.reply()
+        self.assertIsNone(self.engine.candidate(B, "我也觉得星河画面不错", conversation="c2"))
+        self.assertFalse(self.engine.lanes)
+
 
 class Collection(unittest.IsolatedAsyncioTestCase):
     async def test_three_messages_one_batch(self):

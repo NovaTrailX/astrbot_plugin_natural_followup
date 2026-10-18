@@ -1,6 +1,7 @@
 """在隔离的官方 AstrBot 源码与数据目录中运行；只替换外部模型和 QQ 发送端。"""
 import asyncio
 import contextvars
+from dataclasses import replace
 import json
 import sys
 from pathlib import Path
@@ -28,6 +29,8 @@ async def main():
     config["provider_settings"].update(streaming_response=False, buffer_intermediate_messages=True,
                                       show_tool_use_status=False, show_tool_call_result=False)
     config["platform_settings"]["segmented_reply"]["enable"] = False
+    # 测试在几秒内发送数十条消息；原生一分钟限流另属框架职责。
+    config["platform_settings"]["rate_limit"]["count"] = 1000
     config.save_config()
     core = AstrBotCoreLifecycle(LogBroker(), db_helper)
     await core.initialize()
@@ -93,13 +96,15 @@ async def main():
             msg.message.insert(0, At(qq="other-user"))
         if image:
             from PIL import Image as PILImage
-            path = Path("data/temp/test.png")
+            path = Path(f"data/temp/test-{msg.message_id}.png")
             path.parent.mkdir(parents=True, exist_ok=True)
             PILImage.new("RGB", (24, 24), "red").save(path)
             msg.message.append(Image.fromFileSystem(str(path.resolve())))
         msg.raw_message = {}
         event = Event(text, msg, PlatformMetadata("aiocqhttp", "测试", "fixture-platform"), group)
         event.outputs, event.fail = [], fail
+        if image:
+            event.track_temporary_local_file(str(path.resolve()))
         events.append(event)
         return event
 
@@ -162,7 +167,7 @@ async def main():
         await asyncio.gather(*(run(e, answer="合并回答") for e in batch))
         assert len(calls) == before + 1, len(calls) - before
         assert sum(len(e.outputs) for e in batch) == 1
-        assert "三段合并" in str(calls[-1]["request"])
+        assert str(calls[-1]["request"]).count("三段合并") == 1
         results.append("三条短消息一次请求")
         old = message("小村长评价旧对象")
         task = asyncio.create_task(execute(old, answer="不应发送的旧答案", delay=.4))
@@ -212,6 +217,31 @@ async def main():
         assert image.outputs == ["看到图片"]
         assert calls[-1]["request"].get("image_urls") or "image_url" in str(calls[-1]["request"])
         results.append("图片进入多模态请求")
+        plugin.engine.lanes[key()].requests.clear()
+        text_with_pending_image = message("小村长评价下一张图")
+        image_task = asyncio.create_task(execute(text_with_pending_image, answer="图片到达前的旧答案", delay=.4))
+        await asyncio.sleep(.15)
+        pending_image = message("", image=True)
+        pending_path = Path(f"data/temp/test-{pending_image.message_obj.message_id}.png")
+        await asyncio.wait_for(asyncio.gather(image_task, asyncio.create_task(execute(pending_image, answer="追加图片回答"))), 15)
+        assert not text_with_pending_image.outputs and pending_image.outputs == ["追加图片回答"]
+        assert "image_url" in str(calls[-1]["request"]) or calls[-1]["request"].get("image_urls")
+        assert not pending_image._temporary_local_files
+        results.append("生成中补图不会被文字追加吞掉，媒体交给原生生命周期管理")
+        plugin.engine.lanes[key()].requests.clear()
+        fast_settings = plugin.engine.settings
+        plugin.engine.settings = replace(fast_settings, debounce_seconds=1.2, max_wait_seconds=3)
+        batch_text, batch_image = message("小村长看合并图片"), message("", image=True)
+        before = len(calls)
+        await asyncio.gather(run(batch_text, answer="合并图片回答"), run(batch_image, answer="合并图片回答"))
+        assert len(calls) == before + 1 and batch_text.outputs + batch_image.outputs == ["合并图片回答"], (
+            len(calls) - before, batch_text.outputs, batch_image.outputs,
+            [(c["id"], c["request"].get("prompt")) for c in calls[before:]])
+        assert calls[-1]["request"].get("image_urls") or "image_url" in str(calls[-1]["request"])
+        assert Path(f"data/temp/test-{batch_image.message_obj.message_id}.png").exists()
+        assert not batch_image._temporary_local_files
+        plugin.engine.settings = fast_settings
+        results.append("合并图片所有权转交主事件，框架保留的历史图片不会被后续事件误删")
         before = len(calls)
         foreign = await run(message("普通续聊", group="other-group"))
         assert not foreign.outputs and len(calls) == before
@@ -230,6 +260,15 @@ async def main():
         reset = await run(message("/reset"))
         assert reset.outputs and not plugin.engine.lanes, reset.outputs
         results.append("成功 reset 清理本群所有窗口")
+        for alias in ["大肥鱼", "小鲸", "鲸鱼娘"]:
+            assert (await run(message(alias + "你好"))).outputs
+        assert (await run(message("普通提问", mention=True))).outputs
+        results.append("四个称呼与原生 @ 无回归")
+        plugin.engine.lanes[key()].expires = plugin.engine.clock() - 1
+        before = len(calls)
+        assert not (await run(message("到期后的普通聊天"))).outputs
+        assert len(calls) == before
+        results.append("到期恢复正常触发，零模型调用")
         print(json.dumps({"passed": results, "model_calls": len(calls)}, ensure_ascii=False))
     finally:
         await core.stop()
