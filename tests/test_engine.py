@@ -98,6 +98,35 @@ class Rules(unittest.TestCase):
         for key in [("platform-b", *A[1:]), (A[0], "bot-b", *A[2:]), (*A[:2], "group-b", A[3]), B]:
             self.assertIsNone(self.candidate("评价星河", key))
 
+    def test_join_topic_question_without_fixed_prefix(self):
+        self.reply(user="评价星河", bot="轨道电梯那段画面很好。")
+        self.now += 13
+        self.assertEqual(self.candidate("轨道电梯材料是什么", B), "join")
+        self.assertEqual(self.candidate("轨道电梯吗？我觉得还行", B), "join")
+        self.assertIsNone(self.candidate("晚上吃火锅吗", B))
+        self.assertIsNone(self.candidate("轨道电梯材料是什么", B, other_target=True))
+        self.now += 8
+        self.assertIsNone(self.candidate("轨道电梯材料是什么", B))
+
+    def test_topic_join_does_not_cross_ambiguous_anchors(self):
+        self.reply(user="聊轨道电梯", bot="轨道电梯的材料强度还不够。")
+        self.reply((*A[:-1], "user-c"), mid="c", user="轨道电梯还有什么问题")
+        self.assertIsNone(self.candidate("轨道电梯怎么供电", B))
+
+    def test_new_joiner_gets_own_window_only_after_reply(self):
+        self.reply(user="聊轨道电梯", bot="轨道电梯的材料强度还不够。")
+        reason = self.candidate("轨道电梯怎么供电", B)
+        self.assertEqual(reason, "join")
+        batch, _ = self.engine.submit(B, reason, Item("joined", "轨道电梯怎么供电"), "c1")
+        self.engine.sent(batch, "可以讨论供电方式。")
+        self.engine.finish(batch)
+        self.now += 21
+        self.assertEqual(self.candidate("再详细说说", B), "followup")
+
+    def test_topic_does_not_join_across_message_boundary(self):
+        self.reply(user="轨道电", bot="梯车改造。")
+        self.assertIsNone(self.candidate("电梯车哪个好", B))
+
     def test_end_closes_only_sender(self):
         self.reply()
         self.reply(B, mid="b")

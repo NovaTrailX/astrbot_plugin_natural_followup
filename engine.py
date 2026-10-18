@@ -14,6 +14,7 @@ MAX_CHARS = 8000
 ACKS = {"好", "好的", "嗯", "嗯嗯", "哦", "噢", "谢谢", "谢了", "哈哈", "哈哈哈", "ok", "收到"}
 COMMON = {"这个", "那个", "什么", "怎么", "觉得", "就是", "还是", "可以", "知道", "一下", "没有", "是不是", "不是", "我们", "你们", "他们", "其实", "不过", "所以", "的话", "你说", "说的"}
 COMMON |= {"我也", "我倒", "这部", "那部", "这点", "那么", "补充", "不对", "可是", "不错", "很好", "好看", "喜欢", "确实", "同感", "对啊", "是啊", "感觉", "真的", "比较", "有点", "特别", "可能", "认为"}
+COMMON |= {"评价", "讨论", "说说", "介绍", "看法"}
 NON_TOPIC = re.compile("|".join(sorted(COMMON, key=len, reverse=True)))
 
 
@@ -163,14 +164,18 @@ class Engine:
             return "followup"
         if image or not self.settings.join_seconds:
             return None
-        if not re.search(r"^(?:我也|我倒|其实|不过|可是|不对|补充|这部|这点|这个|那部|那么|所以|确实|同感|对啊|是啊)", text):
-            return None
+        continuation = bool(re.search(
+            r"^(?:我也|我倒|其实|不过|可是|不对|补充|这部|这点|这个|那部|那么|所以|确实|同感|对啊|是啊)", text
+        ))
         matches = []
         text_terms = terms(text)
         for other_key, other in self.lanes.items():
             if other_key[:-1] != key[:-1] or not other.last_sent or now - other.last_sent > self.settings.join_seconds:
                 continue
-            if text_terms & terms(other.user_text + other.bot_text):
+            overlap = text_terms & terms(other.user_text + " " + other.bot_text)
+            # 明确的话题复现本身就是接续证据，不要求群友套用固定句首。
+            # 单个二字词仍需接续语，避免普通闲聊碰巧撞词就调用模型。
+            if overlap and (continuation or len(overlap) >= 2):
                 matches.append(other)
         return "join" if len(matches) == 1 else None
 

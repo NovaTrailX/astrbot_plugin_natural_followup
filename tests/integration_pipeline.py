@@ -143,6 +143,12 @@ async def main():
         results.append("无关键词续聊")
         joined = await run(message("确实，星河画面不错", sender="bob"), answer="确实，画面是星河的亮点。")
         assert joined.outputs and key("bob") in plugin.engine.lanes
+        plugin.engine.close(key("bob"))
+        await run(message("说说轨道电梯"), answer="轨道电梯的材料强度还不够。")
+        joined_question = await run(message("轨道电梯材料是什么", sender="bob"), answer="材料需要高比强度。")
+        assert joined_question.outputs == ["材料需要高比强度。"] and key("bob") in plugin.engine.lanes
+        assert (await run(message("再详细说说", sender="bob"), answer="还需要考虑缆绳长度。")).outputs
+        results.append("无固定句首的相关问题加入并建立新用户续聊窗口")
         before = len(calls)
         unrelated = await run(message("我也想去吃火锅", sender="carol"))
         assert not unrelated.outputs and len(calls) == before
@@ -213,6 +219,8 @@ async def main():
         assert plugin.engine.lanes[key()].expires == expiry
         assert "未送达答案" not in await history(failed)
         results.append("发送失败不续期不入历史")
+        # 图片生命周期另起独立情景，不沿用前面多项测试累计的每分钟配额。
+        plugin.engine.lanes[key()].requests.clear()
         image = await run(message("", image=True), answer="看到图片")
         assert image.outputs == ["看到图片"]
         assert calls[-1]["request"].get("image_urls") or "image_url" in str(calls[-1]["request"])
