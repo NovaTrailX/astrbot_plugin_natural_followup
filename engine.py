@@ -14,6 +14,7 @@ MAX_CHARS = 8000
 ACKS = {"好", "好的", "嗯", "嗯嗯", "哦", "噢", "谢谢", "谢了", "哈哈", "哈哈哈", "ok", "收到"}
 COMMON = {"这个", "那个", "什么", "怎么", "觉得", "就是", "还是", "可以", "知道", "一下", "没有", "是不是", "不是", "我们", "你们", "他们", "其实", "不过", "所以", "的话", "你说", "说的"}
 COMMON |= {"我也", "我倒", "这部", "那部", "这点", "那么", "补充", "不对", "可是", "不错", "很好", "好看", "喜欢", "确实", "感觉", "真的", "比较", "有点", "特别", "可能", "认为"}
+NON_TOPIC = re.compile("|".join(sorted(COMMON, key=len, reverse=True)))
 
 
 def plain_end(text):
@@ -22,7 +23,7 @@ def plain_end(text):
 
 def terms(text):
     result = set(re.findall(r"[A-Za-z0-9_]{3,}", text.lower()))
-    for word in re.findall(r"[\u4e00-\u9fff]+", text):
+    for word in re.findall(r"[\u4e00-\u9fff]+", NON_TOPIC.sub(" ", text)):
         result.update(word[i:i + 2] for i in range(len(word) - 1))
     return result - COMMON
 
