@@ -1,0 +1,16 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  behavior:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: astrbot_plugin_natural_followup
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+        working-directory: astrbot_plugin_natural_followup
+      - run: python -m compileall -q .
+        working-directory: astrbot_plugin_natural_followup

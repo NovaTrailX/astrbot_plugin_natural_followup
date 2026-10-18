@@ -1,0 +1,85 @@
+{
+  "enabled": {
+    "description": "启用续聊",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后恢复 AstrBot 原生触发。"
+  },
+  "enabled_groups": {
+    "description": "启用群列表",
+    "type": "list",
+    "default": [],
+    "hint": "填写 平台实例ID:GroupMessage:群号；空列表不启用任何群。"
+  },
+  "aliases": {
+    "description": "额外称呼",
+    "type": "list",
+    "default": [],
+    "hint": "句首称呼或句末独立称呼唤醒；不匹配普通句中提及。"
+  },
+  "idle_seconds": {
+    "description": "本人空闲超时（秒）",
+    "type": "float",
+    "default": 90,
+    "hint": "10–300 秒；从最后一次成功发送的回答计算。"
+  },
+  "join_seconds": {
+    "description": "群友加入窗口（秒）",
+    "type": "float",
+    "default": 20,
+    "hint": "0–60 秒且不大于本人超时；0 关闭群友自动加入。仅有文字关联、归属明确的插话进入模型。"
+  },
+  "debounce_seconds": {
+    "description": "短消息合并等待（秒）",
+    "type": "float",
+    "default": 1.2,
+    "hint": "0–3 秒；同一人停止输入后提交。调大会减少拆句请求，但会延迟回答。"
+  },
+  "max_wait_seconds": {
+    "description": "最大收集等待（秒）",
+    "type": "float",
+    "default": 3,
+    "hint": "0–10 秒且不小于合并等待；连续输入也不会无限等待。"
+  },
+  "image_followup": {
+    "description": "图片续聊",
+    "type": "bool",
+    "default": true,
+    "hint": "沿用已有多模态能力；不配置额外识图模型。生成中补图在下一轮处理。"
+  },
+  "user_batches_per_minute": {
+    "description": "每用户自动候选上限",
+    "type": "int",
+    "default": 8,
+    "hint": "每分钟 1–120 批；不限制显式 @、称呼或原生唤醒。"
+  },
+  "group_batches_per_minute": {
+    "description": "每群自动候选上限",
+    "type": "int",
+    "default": 20,
+    "hint": "每分钟 1–120 批；控制多人同时免唤醒的调用量。"
+  },
+  "join_batches_per_window": {
+    "description": "群友加入候选上限",
+    "type": "int",
+    "default": 2,
+    "hint": "每个加入窗口 1–120 批；默认每群 20 秒最多 2 批。"
+  },
+  "end_phrases": {
+    "description": "结束续聊短语",
+    "type": "list",
+    "default": [
+      "不用回了",
+      "先这样",
+      "不用回复了",
+      "先不聊了"
+    ],
+    "hint": "去掉首尾空白和末尾标点后精确匹配，只关闭当前用户。"
+  },
+  "debug_stats": {
+    "description": "调试统计",
+    "type": "bool",
+    "default": false,
+    "hint": "记录触发原因、批次数和耗时；不记录正文、账号或凭据。"
+  }
+}

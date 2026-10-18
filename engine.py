@@ -13,6 +13,7 @@ MAX_ITEMS = 8
 MAX_CHARS = 8000
 ACKS = {"好", "好的", "嗯", "嗯嗯", "哦", "噢", "谢谢", "谢了", "哈哈", "哈哈哈", "ok", "收到"}
 COMMON = {"这个", "那个", "什么", "怎么", "觉得", "就是", "还是", "可以", "知道", "一下", "没有", "是不是", "不是", "我们", "你们", "他们", "其实", "不过", "所以", "的话", "你说", "说的"}
+COMMON |= {"我也", "我倒", "这部", "那部", "这点", "那么", "补充", "不对", "可是", "不错", "很好", "好看", "喜欢", "确实", "感觉", "真的", "比较", "有点", "特别", "可能", "认为"}
 
 
 def plain_end(text):
@@ -58,6 +59,10 @@ class Batch:
     run_context: object = None
     conversation: str | None = None
     parent: object = None
+    original_send: object = None
+    delivered: bool = False
+    latest_text: str = ""
+    final_chain: object = None
 
     @property
     def explicit(self):
@@ -112,11 +117,10 @@ class Engine:
     def prune(self):
         now = self.clock()
         for key, lane in list(self.lanes.items()):
-            for batch in list(lane.batches):
-                # 管线任务回调负责正常清理；此上限只防止永不结束的外部处理器。
-                if now - batch.created >= 600:
-                    batch.cancelled = True
-                    self.finish(batch)
+            # 同一人的悬挂管线和等待批次一起失效，不让媒体批次越过仍在运行的旧请求。
+            if any(now - batch.created >= 600 for batch in lane.batches):
+                self.close(key)
+                continue
             if not lane.batches and now >= lane.expires and (not lane.requests or now - lane.requests[-1] >= 60):
                 self.close(key)
         for mapping in (self.group_requests, self.join_requests):
@@ -126,6 +130,9 @@ class Engine:
 
     def candidate(self, key, text, *, explicit=False, other_target=False, image=False, conversation=None):
         now = self.clock()
+        if any(k[:-1] == key[:-1] and v.conversation is not None and v.conversation != conversation
+               for k, v in self.lanes.items()):
+            self.clear_scope(key[:-1])
         lane = self.lanes.get(key)
         if lane and lane.conversation != conversation:
             if lane.conversation is None and lane.batches:
@@ -246,7 +253,7 @@ class Engine:
         parent = child.parent
         if parent and not parent.done.is_set():
             parent.covered = max(parent.covered, child.covered)
-            parent.items.extend(child.items)
+            parent.latest_text = child.text[-800:]
 
     def sent(self, batch, text):
         lane = self.lanes.get(batch.key)
@@ -255,7 +262,7 @@ class Engine:
         now = self.clock()
         lane.last_sent = now
         lane.expires = now + self.settings.idle_seconds
-        lane.user_text = batch.text[-800:]
+        lane.user_text = (batch.latest_text or batch.text)[-800:]
         lane.bot_text = text[-800:]
 
     def finish(self, batch):

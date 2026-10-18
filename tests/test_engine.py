@@ -79,6 +79,10 @@ class Rules(unittest.TestCase):
         self.now += 21
         self.assertIsNone(self.candidate("我也觉得星河画面不错", B))
 
+    def test_join_cues_are_not_topic_overlap(self):
+        self.reply(user="我也觉得星河不错", bot="确实很好看。")
+        self.assertIsNone(self.candidate("我也觉得火锅不错", B))
+
     def test_isolation(self):
         self.reply()
         for key in [("platform-b", *A[1:]), (A[0], "bot-b", *A[2:]), (*A[:2], "group-b", A[3]), B]:
@@ -126,7 +130,7 @@ class Rules(unittest.TestCase):
         self.engine.absorb(second)
         self.engine.finish(second)
         self.assertFalse(self.engine.stale(first))
-        self.assertIn("改为评价乙", first.text)
+        self.assertEqual(first.latest_text, "改为评价乙")
 
     def test_limits_do_not_suppress_answer_or_limit_explicit(self):
         self.engine = Engine(Settings(user_batches_per_minute=1), lambda: self.now)
