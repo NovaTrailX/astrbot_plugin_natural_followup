@@ -141,7 +141,7 @@ async def main():
         follow = await run(message("评价电影星河"), answer="星河的画面很美。")
         assert follow.outputs == ["星河的画面很美。"]
         results.append("无关键词续聊")
-        joined = await run(message("我也觉得星河画面不错", sender="bob"), answer="确实，画面是星河的亮点。")
+        joined = await run(message("确实，星河画面不错", sender="bob"), answer="确实，画面是星河的亮点。")
         assert joined.outputs and key("bob") in plugin.engine.lanes
         before = len(calls)
         unrelated = await run(message("我也想去吃火锅", sender="carol"))

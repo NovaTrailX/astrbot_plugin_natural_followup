@@ -83,6 +83,16 @@ class Rules(unittest.TestCase):
         self.reply(user="我也觉得星河不错", bot="确实很好看。")
         self.assertIsNone(self.candidate("我也觉得火锅不错", B))
 
+    def test_agreement_needs_actual_topic_and_unique_anchor(self):
+        self.reply(user="星河怎么样", bot="特效很用心。")
+        for cue in ["确实", "同感", "对啊", "是啊"]:
+            with self.subTest(cue=cue):
+                self.assertEqual(self.candidate(cue + "，特效不错", B), "join")
+                self.assertIsNone(self.candidate(cue, B))
+                self.assertIsNone(self.candidate(cue + "，火锅不错", B))
+        self.reply((*A[:-1], "user-c"), mid="c", bot="特效很用心。")
+        self.assertIsNone(self.candidate("确实，特效不错", B))
+
     def test_isolation(self):
         self.reply()
         for key in [("platform-b", *A[1:]), (A[0], "bot-b", *A[2:]), (*A[:2], "group-b", A[3]), B]:
