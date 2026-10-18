@@ -16,6 +16,13 @@ COMMON = {"这个", "那个", "什么", "怎么", "觉得", "就是", "还是", 
 COMMON |= {"我也", "我倒", "这部", "那部", "这点", "那么", "补充", "不对", "可是", "不错", "很好", "好看", "喜欢", "确实", "同感", "对啊", "是啊", "感觉", "真的", "比较", "有点", "特别", "可能", "认为"}
 COMMON |= {"评价", "讨论", "说说", "介绍", "看法"}
 NON_TOPIC = re.compile("|".join(sorted(COMMON, key=len, reverse=True)))
+# 没有独立话题词的省略追问可以承接上文；带新对象的问题必须有话题关联。
+CONTEXT_QUESTION = re.compile(
+    r"^(?:(?:那|那么|所以)[，,\s]*)?(?:(?:它|这个|那个|这样|那样)[，,\s]*)?"
+    r"(?:再(?:详细|具体)?(?:说说|讲讲|解释一下)|详细(?:点|一点)|具体(?:点|一点)|继续(?:说|讲)?|"
+    r"然后呢|后来呢|为什么|为啥|怎么(?:做到|实现)的?|有多(?:贵|难|长|重|大|快)|"
+    r"多少钱|多少年|多久|真的(?:吗)?|是吗|什么意思|能(?:做到|实现)吗|可以吗)$"
+)
 
 
 def plain_end(text):
@@ -82,6 +89,7 @@ class Lane:
     last_sent: float = 0
     user_text: str = ""
     bot_text: str = ""
+    join_topic: str = ""
     revision: int = 0
     batches: list[Batch] = field(default_factory=list)
     recent_ids: deque = field(default_factory=lambda: deque(maxlen=64))
@@ -159,8 +167,13 @@ class Engine:
         if other_target or (not text and not image) or (image and not text and not self.settings.image_followup):
             return None
         if lane and (now < lane.expires or lane.batches):
-            if not image and plain_end(text) in ACKS and not asks_question(lane.bot_text):
-                return None
+            if not image and plain_end(text) in ACKS:
+                return "followup" if asks_question(lane.bot_text) else None
+            explicit_pending = any(b.explicit and not b.cancelled for b in lane.batches)
+            if lane.join_topic and not explicit_pending and not image:
+                anchor = " ".join([lane.join_topic, lane.user_text, lane.bot_text])
+                if not terms(text) & terms(anchor) and not CONTEXT_QUESTION.fullmatch(plain_end(text)):
+                    return None
             return "followup"
         if image or not self.settings.join_seconds:
             return None
@@ -209,6 +222,8 @@ class Engine:
         batch = Batch(key, reason, [item], now, now, lane.revision, lane.revision, conversation=conversation)
         if not self.allow(batch):
             return None, False
+        if reason == "join":
+            lane.join_topic = item.text[:800]
         batch.parent = next((b for b in reversed(lane.batches) if b.running and not b.done.is_set()), None)
         lane.batches.append(batch)
         return batch, True
@@ -270,6 +285,10 @@ class Engine:
         lane.expires = now + self.settings.idle_seconds
         lane.user_text = (batch.latest_text or batch.text)[-800:]
         lane.bot_text = text[-800:]
+        if batch.explicit:
+            lane.join_topic = ""
+        elif batch.reason == "join":
+            lane.join_topic = batch.text[:400] + " " + text[:399]
 
     def finish(self, batch):
         batch.done.set()

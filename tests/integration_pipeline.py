@@ -147,6 +147,14 @@ async def main():
         await run(message("说说轨道电梯"), answer="轨道电梯的材料强度还不够。")
         joined_question = await run(message("轨道电梯材料是什么", sender="bob"), answer="材料需要高比强度。")
         assert joined_question.outputs == ["材料需要高比强度。"] and key("bob") in plugin.engine.lanes
+        before = len(calls)
+        joined_expiry = plugin.engine.lanes[key("bob")].expires
+        off_topic = await run(message("火锅在哪里吃", sender="bob"))
+        assert not off_topic.outputs and len(calls) == before
+        assert plugin.engine.lanes[key("bob")].expires == joined_expiry
+        assert "火锅在哪里吃" not in await history(joined_question)
+        assert (await run(message("这种材料能制造吗", sender="bob"), answer="可以制造小样。")).outputs
+        results.append("加入者换题本地零调用且不续期，相关追问仍可接续")
         assert (await run(message("再详细说说", sender="bob"), answer="还需要考虑缆绳长度。")).outputs
         results.append("无固定句首的相关问题加入并建立新用户续聊窗口")
         before = len(calls)

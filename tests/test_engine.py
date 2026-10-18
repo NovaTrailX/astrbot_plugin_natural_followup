@@ -123,6 +123,39 @@ class Rules(unittest.TestCase):
         self.now += 21
         self.assertEqual(self.candidate("再详细说说", B), "followup")
 
+    def test_joined_window_filters_topic_switch_without_renewal(self):
+        self.reply(user="聊轨道电梯", bot="轨道电梯材料强度很重要。")
+        batch, _ = self.engine.submit(B, "join", Item("joined", "轨道电梯用什么材料"), "c1")
+        self.engine.sent(batch, "需要高强度材料。")
+        self.engine.finish(batch)
+        lane = self.engine.lanes[B]
+        before = (lane.expires, list(lane.requests), lane.revision)
+        for text in ["火锅在哪里吃", "今晚吃火锅", "那火锅在哪里吃", "确实，火锅好吃"]:
+            self.assertIsNone(self.candidate(text, B), text)
+        self.assertEqual((lane.expires, list(lane.requests), lane.revision), before)
+        for text in ["这种材料现在能造出来吗", "轨道电梯怎么供电", "再详细说说", "有多贵", "那它有多贵？"]:
+            self.assertEqual(self.candidate(text, B), "followup", text)
+        self.assertEqual(self.candidate("", B, image=True), "followup")
+
+    def test_joined_window_explicit_trigger_can_change_topic(self):
+        self.reply()
+        joined, _ = self.engine.submit(B, "join", Item("joined", "星河画面不错"), "c1")
+        self.engine.sent(joined, "特效用心。")
+        self.engine.finish(joined)
+        self.assertEqual(self.candidate("小村长推荐火锅", B), "named")
+        explicit, _ = self.engine.submit(B, "named", Item("new-topic", "小村长推荐火锅"), "c1")
+        self.assertEqual(self.candidate("想吃辣一点", B), "followup")
+        self.engine.sent(explicit, "喜欢哪种口味？")
+        self.engine.finish(explicit)
+        self.assertFalse(self.engine.lanes[B].join_topic)
+        self.assertEqual(self.candidate("辣一点的", B), "followup")
+
+    def test_joined_pending_reply_ignores_unrelated_correction(self):
+        self.reply(user="轨道电梯", bot="需要高强度材料。")
+        joined, _ = self.engine.submit(B, "join", Item("joined", "轨道电梯用什么材料"), "c1")
+        self.assertIsNone(self.candidate("火锅在哪里吃", B))
+        self.assertFalse(self.engine.stale(joined))
+
     def test_topic_does_not_join_across_message_boundary(self):
         self.reply(user="轨道电", bot="梯车改造。")
         self.assertIsNone(self.candidate("电梯车哪个好", B))
