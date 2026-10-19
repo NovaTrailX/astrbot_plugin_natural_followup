@@ -108,6 +108,14 @@ class Rules(unittest.TestCase):
         self.now += 8
         self.assertIsNone(self.candidate("轨道电梯材料是什么", B))
 
+    def test_scattered_bigrams_do_not_join(self):
+        self.reply(user="聊轨道电梯", bot="轨道电梯的材料强度还不够。")
+        self.assertIsNone(self.candidate("我今天材料交了，强度训练也结束了", B))
+        self.assertEqual(self.candidate("材料强度是什么", B), "join")
+        self.reply(user="评价这部电影", bot="星河的结局留了悬念。", mid="ending")
+        self.assertEqual(self.candidate("星河结局是什么", B), "join")
+        self.assertIsNone(self.candidate("星河结局不错", B))
+
     def test_topic_join_does_not_cross_ambiguous_anchors(self):
         self.reply(user="聊轨道电梯", bot="轨道电梯的材料强度还不够。")
         self.reply((*A[:-1], "user-c"), mid="c", user="轨道电梯还有什么问题")

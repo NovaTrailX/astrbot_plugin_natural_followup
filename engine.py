@@ -40,6 +40,24 @@ def asks_question(text):
     return bool(re.search(r"[?？]|(?:吗|么|呢)[呀啊。！! ]*$|说清楚|请告诉|请提供|哪个|哪种|是否", text[-400:]))
 
 
+def matched_span(text, accepted):
+    """连续命中的汉字长度。相邻二字词都在话题里才累加，散落的词不算一句话题。"""
+    best = 0
+    for word in re.findall(r"[\u4e00-\u9fff]+", text):
+        run = 0
+        for i in range(len(word) - 1):
+            if word[i:i + 2] in accepted:
+                run += 1
+                best = max(best, run + 1)
+            else:
+                run = 0
+    return best
+
+
+def asks_topic(text):
+    return bool(re.search(r"[?？]|什么|怎么|为何|为什么|多少|哪个|哪种|吗", text))
+
+
 @dataclass
 class Item:
     message_id: str
@@ -186,9 +204,9 @@ class Engine:
             if other_key[:-1] != key[:-1] or not other.last_sent or now - other.last_sent > self.settings.join_seconds:
                 continue
             overlap = text_terms & terms(other.user_text + " " + other.bot_text)
-            # 明确的话题复现本身就是接续证据，不要求群友套用固定句首。
-            # 单个二字词仍需接续语，避免普通闲聊碰巧撞词就调用模型。
-            if overlap and (continuation or len(overlap) >= 2):
+            # 连续说法或提问才算话题复现。两个互不相邻的二字词不够，避免闲聊碰巧撞词。
+            topical = matched_span(text, overlap) >= 3 or (len(overlap) >= 2 and asks_topic(text))
+            if overlap and (continuation or topical):
                 matches.append(other)
         return "join" if len(matches) == 1 else None
 

@@ -1,7 +1,7 @@
 name: astrbot_plugin_natural_followup
 display_name: 自然续聊
 desc: 为 QQ 群提供有界的连续对话窗口、短消息合并与相关插话筛选，无额外判断模型。
-version: v0.1.0
+version: v0.1.1
 author: NovaTrailX
 repo: https://github.com/NovaTrailX/astrbot_plugin_natural_followup
 astrbot_version: '>=4.28.1,<4.29.0'

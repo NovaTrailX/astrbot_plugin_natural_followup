@@ -16,7 +16,7 @@ from .settings import Settings
 KEY = "_natural_followup_batch"
 
 
-@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.0")
+@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.1")
 class NaturalFollowup(Star):
     def __init__(self, context: Context, config):
         super().__init__(context)
