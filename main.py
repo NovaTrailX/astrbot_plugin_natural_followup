@@ -4,7 +4,7 @@ from contextlib import suppress
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, AtAll, Image, Plain, Reply
+from astrbot.api.message_components import At, AtAll, Image, Nodes, Plain, Reply
 from astrbot.api.star import Context, Star, register
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.filter.command import CommandFilter
@@ -14,9 +14,25 @@ from .engine import Batch, Engine, Item, SILENCE
 from .settings import Settings
 
 KEY = "_natural_followup_batch"
+SILENCE_MARKERS = frozenset({SILENCE, "<NO_REPLY>", "<NO_RESPONSE>"})
+EMPTY_REPLY_FALLBACK = "我刚才没有生成出回复，你可以再问一次。"
 
 
-@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.1")
+def _visible_text(text):
+    return bool(text.replace("\u200b", "").replace("\ufeff", "").strip())
+
+
+def _has_non_text_result(chain):
+    return bool(
+        chain
+        and any(
+            not isinstance(component, (Plain, At, AtAll, Reply))
+            for component in chain.chain
+        )
+    )
+
+
+@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.2")
 class NaturalFollowup(Star):
     def __init__(self, context: Context, config):
         super().__init__(context)
@@ -105,7 +121,19 @@ class NaturalFollowup(Star):
         item = Item(str(event.message_obj.message_id), text, event, images)
         batch, leader = self.engine.submit(key, reason, item, conversation)
         if batch is None:
-            self.log("duplicate_or_capacity")
+            current_lane = self.engine.lanes.get(key)
+            duplicate = bool(
+                current_lane and item.message_id in current_lane.recent_ids
+            )
+            if duplicate:
+                event.should_call_llm(True)
+                self.log("duplicate")
+            elif reason in {"explicit", "named"}:
+                event.is_at_or_wake_command = True
+                event.should_call_llm(False)
+                self.log("wake_fallback", trigger=reason)
+            else:
+                self.log("capacity_rejected")
             return
         event.set_extra(KEY, batch)
         if not leader:
@@ -146,6 +174,10 @@ class NaturalFollowup(Star):
         event.set_extra("_natural_followup_managed", True)
         event.set_extra("enable_streaming", False)
         event.set_extra("_natural_followup_message_ids", [i.message_id for i in batch.items])
+        event.set_extra("_natural_followup_batch_items", [
+            {"id": i.message_id, "text": i.text,
+             "ts": float(getattr(i.event.message_obj, "timestamp", 0) or 0)}
+            for i in batch.items])
         event.set_extra("_group_participation_reason", "named" if batch.explicit else "followup")
         self.log("accepted", trigger=batch.reason, batches=1, items=len(batch.items), explicit=batch.explicit)
 
@@ -208,13 +240,48 @@ class NaturalFollowup(Star):
         if batch is None or resp is None or resp.role != "assistant":
             return
         self._sync_consumed(batch)
-        batch.raw_reply = resp.completion_text or ""
-        batch.silent = not batch.explicit and batch.raw_reply.strip() == SILENCE
+        raw_reply = resp.completion_text or ""
+        has_tool_calls = bool(resp.tools_call_name or resp.tools_call_ids or resp.tools_call_args)
+        has_non_text_result = _has_non_text_result(resp.result_chain)
+        normalized_reply = raw_reply.replace("\u200b", "").replace("\ufeff", "").strip()
+        batch.raw_reply = raw_reply
+        batch.silent = False
+        if not has_tool_calls and not has_non_text_result:
+            if normalized_reply in SILENCE_MARKERS:
+                if batch.explicit:
+                    resp.result_chain = None
+                    resp.completion_text = EMPTY_REPLY_FALLBACK
+                    batch.raw_reply = EMPTY_REPLY_FALLBACK
+                    logger.warning(
+                        "[NaturalFollowup] explicit_silence_marker message_id=%s",
+                        batch.items[0].message_id,
+                    )
+                else:
+                    batch.raw_reply = ""
+                    batch.silent = True
+                    self.log("silent_marker")
+            elif not _visible_text(normalized_reply):
+                if batch.explicit:
+                    # 修复器走本地短答，不再触发额外模型请求。
+                    resp.result_chain = None
+                    resp.completion_text = EMPTY_REPLY_FALLBACK
+                    batch.raw_reply = EMPTY_REPLY_FALLBACK
+                    logger.warning(
+                        "[NaturalFollowup] empty_model_reply explicit=true message_id=%s",
+                        batch.items[0].message_id,
+                    )
+                else:
+                    batch.raw_reply = ""
+                    batch.silent = True
+                    logger.warning(
+                        "[NaturalFollowup] empty_model_reply explicit=false message_id=%s",
+                        batch.items[0].message_id,
+                    )
         batch.suppressed = self.engine.stale(batch)
         if batch.silent or batch.suppressed:
             # 先让其他响应钩子看不到内部标记或过时答案。
-            resp.completion_text = ""
             resp.result_chain = None
+            resp.completion_text = ""
         if batch.silent or batch.cancelled:
             event.stop_event()
 
@@ -271,12 +338,23 @@ class NaturalFollowup(Star):
             async def checked_send(chain):
                 if self.engine.stale(batch):
                     batch.suppressed = True
+                    event.set_extra("_respond_delivery_suppressed", True)
                     self._hide_last_answer(batch)
                     return
-                await batch.original_send(chain)
+                try:
+                    await batch.original_send(chain)
+                except Exception:
+                    self._hide_last_answer(batch)
+                    raise
+                # RespondStage 可能经此包装器发送失败提示，不能因此续期会话。
+                if event.get_extra("_respond_delivery_failed", False):
+                    return
                 batch.delivered = True
                 event.set_extra("_natural_followup_delivered", True)
                 actual = chain.get_plain_text() if chain else ""
+                if not actual and chain and any(isinstance(c, Nodes) for c in chain.chain):
+                    # OutputPro 将原文字放入转发节点；这里只在原发送成功后承接。
+                    actual = event.get_extra("_outputpro_forward_text", "")
                 if actual:
                     prior = event.get_extra("_natural_followup_sent_text", "")
                     event.set_extra("_natural_followup_sent_text", "\n".join(x for x in [prior, actual] if x))
@@ -294,10 +372,16 @@ class NaturalFollowup(Star):
         batch = event.get_extra(KEY)
         if batch is None or not batch.raw_reply:
             return
+        if event.get_extra("_respond_delivery_failed", False):
+            self._hide_last_answer(batch)
+            self.log("delivery_failed")
+            return
         if not batch.delivered:
             self._hide_last_answer(batch)
             return
         result = event.get_result()
-        text = result.get_plain_text() if result else batch.raw_reply
+        text = event.get_extra("_natural_followup_sent_text", "") or (
+            result.get_plain_text() if result else batch.raw_reply
+        )
         self.engine.sent(batch, text)
         self.log("sent", items=len(batch.items))

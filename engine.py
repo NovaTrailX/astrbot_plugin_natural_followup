@@ -213,6 +213,7 @@ class Engine:
     def submit(self, key, reason, item, conversation=None):
         self.prune()
         lane = self.lanes.get(key)
+        created_lane = lane is None
         if lane is None:
             if len(self.lanes) >= MAX_STATES:
                 return None, False
@@ -227,9 +228,9 @@ class Engine:
             batch = None
         if batch is None and len(lane.batches) >= 4:
             return None, False
-        lane.recent_ids.append(item.message_id)
-        lane.revision += 1
         if batch:
+            lane.recent_ids.append(item.message_id)
+            lane.revision += 1
             batch.items.append(item)
             batch.updated = now
             batch.revision = batch.covered = lane.revision
@@ -237,9 +238,14 @@ class Engine:
                 batch.reason = reason
             batch.changed.set()
             return batch, False
-        batch = Batch(key, reason, [item], now, now, lane.revision, lane.revision, conversation=conversation)
+        revision = lane.revision + 1
+        batch = Batch(key, reason, [item], now, now, revision, revision, conversation=conversation)
         if not self.allow(batch):
+            if created_lane:
+                self.lanes.pop(key, None)
             return None, False
+        lane.recent_ids.append(item.message_id)
+        lane.revision = revision
         if reason == "join":
             lane.join_topic = item.text[:800]
         batch.parent = next((b for b in reversed(lane.batches) if b.running and not b.done.is_set()), None)
