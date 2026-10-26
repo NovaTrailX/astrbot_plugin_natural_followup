@@ -32,7 +32,7 @@ def _has_non_text_result(chain):
     )
 
 
-@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.2")
+@register("astrbot_plugin_natural_followup", "NovaTrailX", "有界、可沉默的 QQ 群自然续聊", "0.1.3")
 class NaturalFollowup(Star):
     def __init__(self, context: Context, config):
         super().__init__(context)
