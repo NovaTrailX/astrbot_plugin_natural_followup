@@ -15,7 +15,7 @@ B = (*A[:-1], "user-b")
 class Rules(unittest.TestCase):
     def setUp(self):
         self.now = 1000.0
-        self.engine = Engine(Settings(aliases=["小村长", "大肥鱼", "小鲸", "鲸鱼娘"]), lambda: self.now)
+        self.engine = Engine(Settings(aliases=["小助手", "问答机", "助手", "机器人"]), lambda: self.now)
 
     def reply(self, key=A, user="评价电影星河", bot="你想听剧情还是画面？", mid="one"):
         batch, _ = self.engine.submit(key, "explicit", Item(mid, user), "c1")
@@ -27,9 +27,9 @@ class Rules(unittest.TestCase):
         return self.engine.candidate(key, text, conversation="c1", **kwargs)
 
     def test_aliases_and_native_triggers(self):
-        for text in ["小村长你怎么评价", "大肥鱼来看看", "小鲸", "鲸鱼娘你好", "你怎么看，小村长"]:
+        for text in ["小助手你怎么评价", "问答机来看看", "助手", "机器人你好", "你怎么看，小助手"]:
             self.assertEqual(self.candidate(text), "named")
-        self.assertIsNone(self.candidate("我昨天看到了小村长的消息"))
+        self.assertIsNone(self.candidate("我昨天看到了小助手的消息"))
         self.assertEqual(self.candidate("一般问题", explicit=True), "explicit")
 
     def test_unrestricted_followup_and_expiry(self):
@@ -64,7 +64,7 @@ class Rules(unittest.TestCase):
         self.assertIsNone(self.candidate("你怎么看", other_target=True))
         self.assertEqual(self.candidate("", image=True), "followup")
         self.assertIsNone(self.candidate(""))
-        self.assertEqual(self.candidate("小村长你怎么看", other_target=True), "named")
+        self.assertEqual(self.candidate("小助手你怎么看", other_target=True), "named")
 
     def test_join_requires_unique_anchor(self):
         self.reply()
@@ -150,8 +150,8 @@ class Rules(unittest.TestCase):
         joined, _ = self.engine.submit(B, "join", Item("joined", "星河画面不错"), "c1")
         self.engine.sent(joined, "特效用心。")
         self.engine.finish(joined)
-        self.assertEqual(self.candidate("小村长推荐火锅", B), "named")
-        explicit, _ = self.engine.submit(B, "named", Item("new-topic", "小村长推荐火锅"), "c1")
+        self.assertEqual(self.candidate("小助手推荐火锅", B), "named")
+        explicit, _ = self.engine.submit(B, "named", Item("new-topic", "小助手推荐火锅"), "c1")
         self.assertEqual(self.candidate("想吃辣一点", B), "followup")
         self.engine.sent(explicit, "喜欢哪种口味？")
         self.engine.finish(explicit)
@@ -171,7 +171,7 @@ class Rules(unittest.TestCase):
     def test_end_closes_only_sender(self):
         self.reply()
         self.reply(B, mid="b")
-        self.assertEqual(self.candidate("小村长，不用回了。"), "end")
+        self.assertEqual(self.candidate("小助手，不用回了。"), "end")
         self.assertNotIn(A, self.engine.lanes)
         self.assertIn(B, self.engine.lanes)
         self.assertIsNone(self.candidate("他说不用回了"))
@@ -183,15 +183,15 @@ class Rules(unittest.TestCase):
         self.assertFalse(self.engine.lanes)
 
     def test_initial_conversation_binding(self):
-        batch, _ = self.engine.submit(A, "named", Item("first", "小村长你好"))
+        batch, _ = self.engine.submit(A, "named", Item("first", "小助手你好"))
         self.assertEqual(self.engine.candidate(A, "补充", conversation="created"), "followup")
         self.assertFalse(batch.cancelled)
         self.assertEqual(batch.conversation, "created")
 
     def test_duplicate_and_batch_limit(self):
-        first, leader = self.engine.submit(A, "named", Item("1", "小村长你好"))
+        first, leader = self.engine.submit(A, "named", Item("1", "小助手你好"))
         self.assertTrue(leader)
-        duplicate, _ = self.engine.submit(A, "named", Item("1", "小村长你好"))
+        duplicate, _ = self.engine.submit(A, "named", Item("1", "小助手你好"))
         self.assertIsNone(duplicate)
         for n in range(2, 9):
             batch, leader = self.engine.submit(A, "followup", Item(str(n), "补充"))
@@ -289,19 +289,19 @@ class Rules(unittest.TestCase):
 class Collection(unittest.IsolatedAsyncioTestCase):
     async def test_three_messages_one_batch(self):
         engine = Engine(Settings(debounce_seconds=.03, max_wait_seconds=.1))
-        first, _ = engine.submit(A, "named", Item("1", "小村长"))
+        first, _ = engine.submit(A, "named", Item("1", "小助手"))
         waiter = asyncio.create_task(engine.collect(first))
         await asyncio.sleep(.01)
         engine.submit(A, "followup", Item("2", "你怎么评价"))
         await asyncio.sleep(.01)
         engine.submit(A, "followup", Item("3", "电影星河"))
         self.assertTrue(await waiter)
-        self.assertEqual(first.text, "小村长\n你怎么评价\n电影星河")
+        self.assertEqual(first.text, "小助手\n你怎么评价\n电影星河")
         self.assertEqual(len(engine.lanes[A].batches), 1)
 
     async def test_unload_interrupts_wait(self):
         engine = Engine(Settings())
-        batch, _ = engine.submit(A, "named", Item("1", "小村长"))
+        batch, _ = engine.submit(A, "named", Item("1", "小助手"))
         waiter = asyncio.create_task(engine.collect(batch))
         await asyncio.sleep(0)
         engine.shutdown()

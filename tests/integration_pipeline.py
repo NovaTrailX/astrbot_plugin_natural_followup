@@ -3,6 +3,7 @@ import asyncio
 import contextvars
 from dataclasses import replace
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,10 @@ sys.path.insert(0, str(Path.cwd()))
 
 
 async def main():
+    if not os.environ.get("ASTRBOT_ROOT"):
+        raise RuntimeError("请先将 ASTRBOT_ROOT 指向独立测试目录，不要使用正在运行的实例数据。")
+    test_root = Path(os.environ["ASTRBOT_ROOT"]).resolve()
+    sys.path.insert(0, str(test_root))
     from astrbot.core import astrbot_config as config, db_helper, LogBroker, logger
     from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -39,6 +44,14 @@ async def main():
     await context.conversation_manager.new_conversation("fixture-platform:GroupMessage:test-group")
     plugin = next(s.star_cls for s in context.get_all_stars() if s.name == "astrbot_plugin_natural_followup")
     assert plugin is not None, "插件加载失败"
+    # 固定虚构测试范围和称呼，不依赖维护者的群列表或个人配置。
+    plugin.settings = replace(
+        plugin.settings, enabled=True,
+        enabled_groups=["fixture-platform:GroupMessage:test-group"],
+        aliases=["小助手", "问答机", "助手", "机器人"],
+        debounce_seconds=0.03, max_wait_seconds=0.1,
+    )
+    plugin.engine = type(plugin.engine)(plugin.settings)
     provider = context.get_all_providers()[0]
     calls = []
     events = []
@@ -96,7 +109,7 @@ async def main():
             msg.message.insert(0, At(qq="other-user"))
         if image:
             from PIL import Image as PILImage
-            path = Path(f"data/temp/test-{msg.message_id}.png")
+            path = test_root / f"data/temp/test-{msg.message_id}.png"
             path.parent.mkdir(parents=True, exist_ok=True)
             PILImage.new("RGB", (24, 24), "red").save(path)
             msg.message.append(Image.fromFileSystem(str(path.resolve())))
@@ -134,7 +147,7 @@ async def main():
     results = []
     try:
         logger.setLevel("WARNING")
-        first = await run(message("小村长你怎么评价"))
+        first = await run(message("小助手你怎么评价"))
         assert first.outputs == ["评价什么？"], (first.outputs, calls)
         assert key() in plugin.engine.lanes
         results.append("称呼开启窗口")
@@ -177,13 +190,13 @@ async def main():
         assert "natural_followup_silent" not in await history(first)
         results.append("沉默不发送不入历史不续期")
         before = len(calls)
-        batch = [message("小村长"), message("你怎么评价"), message("三段合并")]
+        batch = [message("小助手"), message("你怎么评价"), message("三段合并")]
         await asyncio.gather(*(run(e, answer="合并回答") for e in batch))
         assert len(calls) == before + 1, len(calls) - before
         assert sum(len(e.outputs) for e in batch) == 1
         assert str(calls[-1]["request"]).count("三段合并") == 1
         results.append("三条短消息一次请求")
-        old = message("小村长评价旧对象")
+        old = message("小助手评价旧对象")
         task = asyncio.create_task(execute(old, answer="不应发送的旧答案", delay=.4))
         await asyncio.sleep(.15)
         correction = message("改为评价新对象")
@@ -194,7 +207,7 @@ async def main():
         assert correction.outputs == ["新对象答案"], correction.outputs
         assert "不应发送的旧答案" not in await history(old)
         results.append("生成中纠正抑制旧答案与历史")
-        search = message("小村长搜索星河")
+        search = message("小助手搜索星河")
         search_task = asyncio.create_task(execute(search, tool=True, answer="已根据纠正使用同一份搜索结果"))
         await asyncio.wait_for(tool_started.wait(), 5)
         fix = message("纠正，关注上映年份")
@@ -208,7 +221,7 @@ async def main():
         results.append("工具执行期间原生吸收纠正，工具仅执行一次")
         respond = next(s for s in scheduler.stages if type(s).__name__ == "RespondStage")
         respond.enable_seg, respond.interval_method, respond.interval = True, "random", [.3, .3]
-        delayed = message("小村长测试发送前延迟")
+        delayed = message("小助手测试发送前延迟")
         delayed_task = asyncio.create_task(execute(delayed, answer="等待发送的旧答案"))
         await asyncio.sleep(.15)
         latest = message("纠正，换个对象")
@@ -218,11 +231,11 @@ async def main():
         assert "等待发送的旧答案" not in await history(delayed)
         results.append("分段等待期间新纠正也能抑制旧答案")
         before = len(calls)
-        duplicate = await run(message("小村长重复", mid=correction.message_obj.message_id))
+        duplicate = await run(message("小助手重复", mid=correction.message_obj.message_id))
         assert not duplicate.outputs and len(calls) == before
         results.append("重复事件零调用")
         expiry = plugin.engine.lanes[key()].expires
-        failed = await run(message("小村长发送失败测试", fail=True), answer="未送达答案")
+        failed = await run(message("小助手发送失败测试", fail=True), answer="未送达答案")
         assert not failed.outputs
         assert plugin.engine.lanes[key()].expires == expiry
         assert "未送达答案" not in await history(failed)
@@ -234,11 +247,11 @@ async def main():
         assert calls[-1]["request"].get("image_urls") or "image_url" in str(calls[-1]["request"])
         results.append("图片进入多模态请求")
         plugin.engine.lanes[key()].requests.clear()
-        text_with_pending_image = message("小村长评价下一张图")
+        text_with_pending_image = message("小助手评价下一张图")
         image_task = asyncio.create_task(execute(text_with_pending_image, answer="图片到达前的旧答案", delay=.4))
         await asyncio.sleep(.15)
         pending_image = message("", image=True)
-        pending_path = Path(f"data/temp/test-{pending_image.message_obj.message_id}.png")
+        pending_path = test_root / f"data/temp/test-{pending_image.message_obj.message_id}.png"
         await asyncio.wait_for(asyncio.gather(image_task, asyncio.create_task(execute(pending_image, answer="追加图片回答"))), 15)
         assert not text_with_pending_image.outputs and pending_image.outputs == ["追加图片回答"]
         assert "image_url" in str(calls[-1]["request"]) or calls[-1]["request"].get("image_urls")
@@ -247,14 +260,14 @@ async def main():
         plugin.engine.lanes[key()].requests.clear()
         fast_settings = plugin.engine.settings
         plugin.engine.settings = replace(fast_settings, debounce_seconds=1.2, max_wait_seconds=3)
-        batch_text, batch_image = message("小村长看合并图片"), message("", image=True)
+        batch_text, batch_image = message("小助手看合并图片"), message("", image=True)
         before = len(calls)
         await asyncio.gather(run(batch_text, answer="合并图片回答"), run(batch_image, answer="合并图片回答"))
         assert len(calls) == before + 1 and batch_text.outputs + batch_image.outputs == ["合并图片回答"], (
             len(calls) - before, batch_text.outputs, batch_image.outputs,
             [(c["id"], c["request"].get("prompt")) for c in calls[before:]])
         assert calls[-1]["request"].get("image_urls") or "image_url" in str(calls[-1]["request"])
-        assert Path(f"data/temp/test-{batch_image.message_obj.message_id}.png").exists()
+        assert (test_root / f"data/temp/test-{batch_image.message_obj.message_id}.png").exists()
         assert not batch_image._temporary_local_files
         plugin.engine.settings = fast_settings
         results.append("合并图片所有权转交主事件，框架保留的历史图片不会被后续事件误删")
@@ -272,11 +285,11 @@ async def main():
         await run(message("继续刚才的话题"))
         assert len(calls) == before
         results.append("结束恢复原生触发")
-        await run(message("小村长再次开始"))
+        await run(message("小助手再次开始"))
         reset = await run(message("/reset"))
         assert reset.outputs and not plugin.engine.lanes, reset.outputs
         results.append("成功 reset 清理本群所有窗口")
-        for alias in ["大肥鱼", "小鲸", "鲸鱼娘"]:
+        for alias in ["问答机", "助手", "机器人"]:
             assert (await run(message(alias + "你好"))).outputs
         assert (await run(message("普通提问", mention=True))).outputs
         results.append("四个称呼与原生 @ 无回归")
